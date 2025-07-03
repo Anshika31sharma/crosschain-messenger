@@ -1,5 +1,4 @@
 import {
-  ethers,
   JsonRpcProvider,
   parseEther,
   Contract,
