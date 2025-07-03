@@ -9,7 +9,7 @@ export default function Home() {
       bg-white dark:bg-gradient-to-br  dark:from-zinc-950 dark:via-zinc-900 dark:to-zinc-800 
       text-black dark:text-white"
     >
-      <div className=" max-w-7xl  mx-auto">
+      <div className=" max-w-3xl  mx-auto">
         <div className="flex justify-between items-center mb-10">
           <h1 className="lg:text-[25px] md:text-2xl text-[18px] font-extrabold tracking-tight">
             🌉 Cross‑Chain Messenger

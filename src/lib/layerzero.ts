@@ -1,86 +1,104 @@
-import { ethers, parseEther, JsonRpcProvider, Contract, Wallet } from "ethers";
+import {
+  ethers,
+  JsonRpcProvider,
+  parseEther,
+  Contract,
+  Wallet,
+  AbiCoder,
+} from "ethers";
 
 type Logger = (msg: string) => void;
 
-// Environment variables
-const AMOY_RPC_URL = process.env.NEXT_PUBLIC_SEPOLIA_RPC;
-const PRIVATE_KEY = process.env.NEXT_PUBLIC_PRIVATE_KEY;
+// ✅ Instantiate AbiCoder for encoding
+const abiCoder = new AbiCoder();
+
+// ✅ Environment Variables
+const AMOY_RPC_URL = process.env.NEXT_PUBLIC_SEPOLIA_RPC!;
+const PRIVATE_KEY = process.env.NEXT_PUBLIC_PRIVATE_KEY!;
 const LOCALHOST_RPC_URL = "http://localhost:8545";
 
-// Check environment variables
+// ❌ Check for missing env vars
 if (!AMOY_RPC_URL || !PRIVATE_KEY) {
-  throw new Error("❌ Missing environment variables: NEXT_PUBLIC_SEPOLIA_RPC or NEXT_PUBLIC_PRIVATE_KEY");
+  throw new Error("❌ Missing NEXT_PUBLIC_SEPOLIA_RPC or NEXT_PUBLIC_PRIVATE_KEY");
 }
 
-// Chain IDs
+// ✅ Chain IDs (custom)
 const CHAIN_ID_LOCALHOST = "1";
 const CHAIN_ID_AMOY = "2";
 
-// Providers
+// ✅ LayerZero's destination chain ID (for Polygon Amoy)
+const LZ_POLYGON_AMOY_ID = 10109;
+
+// ✅ Providers
 const PROVIDERS: Record<string, JsonRpcProvider> = {
   [CHAIN_ID_LOCALHOST]: new JsonRpcProvider(LOCALHOST_RPC_URL),
   [CHAIN_ID_AMOY]: new JsonRpcProvider(AMOY_RPC_URL),
 };
 
-// Deployed contract addresses
+// ✅ Smart contract addresses per chain
 const CONTRACT_ADDRESSES: Record<string, string> = {
-  [CHAIN_ID_LOCALHOST]: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", // Localhost
-  [CHAIN_ID_AMOY]: "0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec",     // Amoy
+  [CHAIN_ID_LOCALHOST]: "0x5FbDB2315678afecb367f032d93F642f64180aa3", // MessageSender on localhost
+  [CHAIN_ID_AMOY]: "0x1CBd3b2770909D4e10f157cABC84C7264073C9Ec",     // MessageReceiver on Amoy
 };
 
-// ABI
+// ✅ Contract ABI
 const ABI = [
-  "function sendMessage(uint16 dstChainId, address dst, string calldata message) public payable returns (uint256)",
+  "function sendMessage(uint16 dstChainId, bytes calldata destination, string calldata message) external payable",
   "event MessageSent(uint16 indexed srcChain, uint256 indexed msgId, address sender, string message)",
   "event MessageReceived(uint16 indexed srcChain, address receiver, string message)",
 ];
 
+// ✅ Main function
 export async function sendCrossChainMessage(
-  srcChain: string,
-  dstChain: string,
+  src: string,
+  dst: string,
   message: string,
-  logger: Logger
+  log: Logger
 ): Promise<string> {
-  const srcProvider = PROVIDERS[srcChain];
-  const dstProvider = PROVIDERS[dstChain];
+  const srcProvider = PROVIDERS[src];
+  const dstProvider = PROVIDERS[dst];
 
   if (!srcProvider || !dstProvider) {
     throw new Error("❌ Unsupported source or destination chain");
   }
 
-  const signer = new Wallet(PRIVATE_KEY as string, srcProvider);
-  const srcContract = new Contract(CONTRACT_ADDRESSES[srcChain], ABI, signer);
-  const destinationAddress = ethers.getAddress(CONTRACT_ADDRESSES[dstChain]);
+  const signer = new Wallet(PRIVATE_KEY, srcProvider);
+  const srcContract = new Contract(CONTRACT_ADDRESSES[src], ABI, signer);
 
-  logger("⏳ Sending message transaction from source chain ...");
+  // Destination address encoded in bytes
+  const encodedDstAddress = abiCoder.encode(["address"], [CONTRACT_ADDRESSES[dst]]);
 
+  log("⏳ Sending message transaction from source (localhost)...");
   const tx = await srcContract.sendMessage(
-    Number(dstChain),
-    destinationAddress,
+    LZ_POLYGON_AMOY_ID, // dstChainId for Polygon Amoy
+    encodedDstAddress,
     message,
     {
-      value: parseEther("0.001"),
+      value: parseEther("0.01"),
     }
   );
 
-  logger(`🧾 TX Hash (source): ${tx.hash}`);
+  log(`🧾 TX Hash (source): ${tx.hash}`);
   await tx.wait();
-  logger("📡 Transaction hash from the source chain");
+  log("📡 Transaction confirmed on localhost");
 
-  const dstContract = new Contract(CONTRACT_ADDRESSES[dstChain], ABI, dstProvider);
+  // ✅ Listen on the destination chain
+  const dstContract = new Contract(CONTRACT_ADDRESSES[dst], ABI, dstProvider);
 
-  logger("🔁 Waiting for message to be received ..");
+  log("🔁 Waiting for message to be received on Amoy...");
 
   return new Promise((resolve) => {
-    dstContract.once("MessageReceived", (srcChainId: number, receiver: string, msg: string) => {
-      logger(`✅ Message received on destination chain: "${msg}"`);
-      resolve(tx.hash);
-    });
+    dstContract.once(
+      "MessageReceived",
+      (srcChainId: number, receiver: string, msg: string) => {
+        log(`✅ Message received on destination chain: "${msg}"`);
+        resolve(tx.hash);
+      }
+    );
 
-    // Timeout fallback
     setTimeout(() => {
-      logger("⚠️ MessageReceived not emitted in time. Check destination contract or wait longer.");
+      log("⚠️ MessageReceived not emitted in time. Check destination contract or wait longer.");
       resolve(tx.hash);
-    }, 20000); // 20s timeout
+    }, 20000); // 20 seconds timeout
   });
 }

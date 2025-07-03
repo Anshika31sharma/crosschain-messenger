@@ -14,8 +14,8 @@ export const MessageForm: React.FC = () => {
     setLoading(true);
     try {
       const txHash = await sendCrossChainMessage(
-        "localhost", 
-        "amoy",      
+        "1", // Use "1" for localhost
+        "2", // Use "2" for amoy
         message,
         (msg) => setLogs((prev) => [...prev, msg])
       );
